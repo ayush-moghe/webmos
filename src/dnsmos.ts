@@ -15,6 +15,8 @@ const MODEL_CDN_URL = "https://cdn.jsdelivr.net/npm/webmos/models/sig_bak_ovr.on
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const SAMPLING_RATE = 16_000;
+const INPUT_LENGTH = 9.01; // seconds — fixed model input size
+const LEN_SAMPLES = Math.round(INPUT_LENGTH * SAMPLING_RATE); // 144160
 
 // ─── Polyfit coefficients (non-personalized) ─────────────────────────────────
 function polyfitSig(x: number): number {
@@ -140,22 +142,51 @@ export async function runDNSMOS(
   }
 
   // Resample to 16 kHz if needed
-  const audio =
+  let audio =
     sampleRate !== SAMPLING_RATE
       ? resample(audioData, sampleRate, SAMPLING_RATE)
       : audioData;
 
-  // Run inference on the full audio
-  const input = new ort.Tensor("float32", audio, [1, audio.length]);
-  const result = await session!.run({ input_1: input });
-  const out =
-    (result["Identity:0"]?.data as Float32Array) ??
-    (result[Object.keys(result)[0]]?.data as Float32Array);
+  // The ONNX model requires exactly 144160 samples per inference call.
+  // Pad short audio by repeating, and window long audio into segments.
+
+  // Pad/repeat to minimum model input length
+  while (audio.length < LEN_SAMPLES) {
+    const combined = new Float32Array(audio.length * 2);
+    combined.set(audio);
+    combined.set(audio, audio.length);
+    audio = combined;
+  }
+
+  // Run non-overlapping windows and average scores
+  const numWindows = Math.max(1, Math.floor(audio.length / LEN_SAMPLES));
+  const avg = [0, 0, 0];
+
+  for (let idx = 0; idx < numWindows; idx++) {
+    const start = idx * LEN_SAMPLES;
+    const end = start + LEN_SAMPLES;
+    if (end > audio.length) break;
+
+    const segment = audio.slice(start, end);
+    const input = new ort.Tensor("float32", segment, [1, LEN_SAMPLES]);
+    const result = await session!.run({ input_1: input });
+    const out =
+      (result["Identity:0"]?.data as Float32Array) ??
+      (result[Object.keys(result)[0]]?.data as Float32Array);
+
+    avg[0] += out[0];
+    avg[1] += out[1];
+    avg[2] += out[2];
+  }
+
+  avg[0] /= numWindows;
+  avg[1] /= numWindows;
+  avg[2] /= numWindows;
 
   // Apply polyfit
   return {
-    mos_sig: polyfitSig(out[0]),
-    mos_bak: polyfitBak(out[1]),
-    mos_ovr: polyfitOvr(out[2]),
+    mos_sig: polyfitSig(avg[0]),
+    mos_bak: polyfitBak(avg[1]),
+    mos_ovr: polyfitOvr(avg[2]),
   };
 }

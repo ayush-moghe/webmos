@@ -1,6 +1,6 @@
 {
   "name": "webmos",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Run MOS (Mean Opinion Score) models like DNSMOS in the browser via ONNX Runtime Web",
   "keywords": [
     "MOS",

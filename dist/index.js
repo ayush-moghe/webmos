@@ -3,6 +3,8 @@ import * as ort from "onnxruntime-web";
 var ORT_CDN_BASE = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.2/dist/";
 var MODEL_CDN_URL = "https://cdn.jsdelivr.net/npm/webmos/models/sig_bak_ovr.onnx";
 var SAMPLING_RATE = 16e3;
+var INPUT_LENGTH = 9.01;
+var LEN_SAMPLES = Math.round(INPUT_LENGTH * SAMPLING_RATE);
 function polyfitSig(x) {
   return -0.08397278 * x * x + 1.22083953 * x + 52439e-7;
 }
@@ -46,14 +48,34 @@ async function runDNSMOS(audioData, sampleRate) {
   if (!session) {
     await initDNSMOS();
   }
-  const audio = sampleRate !== SAMPLING_RATE ? resample(audioData, sampleRate, SAMPLING_RATE) : audioData;
-  const input = new ort.Tensor("float32", audio, [1, audio.length]);
-  const result = await session.run({ input_1: input });
-  const out = result["Identity:0"]?.data ?? result[Object.keys(result)[0]]?.data;
+  let audio = sampleRate !== SAMPLING_RATE ? resample(audioData, sampleRate, SAMPLING_RATE) : audioData;
+  while (audio.length < LEN_SAMPLES) {
+    const combined = new Float32Array(audio.length * 2);
+    combined.set(audio);
+    combined.set(audio, audio.length);
+    audio = combined;
+  }
+  const numWindows = Math.max(1, Math.floor(audio.length / LEN_SAMPLES));
+  const avg = [0, 0, 0];
+  for (let idx = 0; idx < numWindows; idx++) {
+    const start = idx * LEN_SAMPLES;
+    const end = start + LEN_SAMPLES;
+    if (end > audio.length) break;
+    const segment = audio.slice(start, end);
+    const input = new ort.Tensor("float32", segment, [1, LEN_SAMPLES]);
+    const result = await session.run({ input_1: input });
+    const out = result["Identity:0"]?.data ?? result[Object.keys(result)[0]]?.data;
+    avg[0] += out[0];
+    avg[1] += out[1];
+    avg[2] += out[2];
+  }
+  avg[0] /= numWindows;
+  avg[1] /= numWindows;
+  avg[2] /= numWindows;
   return {
-    mos_sig: polyfitSig(out[0]),
-    mos_bak: polyfitBak(out[1]),
-    mos_ovr: polyfitOvr(out[2])
+    mos_sig: polyfitSig(avg[0]),
+    mos_bak: polyfitBak(avg[1]),
+    mos_ovr: polyfitOvr(avg[2])
   };
 }
 export {
