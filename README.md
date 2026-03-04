@@ -4,6 +4,8 @@ Run [DNSMOS](https://github.com/microsoft/DNS-Challenge/tree/master/DNSMOS) (Mea
 
 No server, no setup, no file copying — just import and go. Model and WASM files load from CDN automatically.
 
+See it in action: [webmos-demo](https://github.com/ayush-moghe/webmos-demo)
+
 ## Install
 
 ```bash
